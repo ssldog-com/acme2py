@@ -1065,6 +1065,10 @@ if __name__ == '__main__':
         get_eab_kid()
         reg_account()
 
+        # 重命名原来的 domain.conf 和 domian.cer
+        os.rename(DOMAIN_CONF_PATH, f'{DOMAIN_CONF_PATH}.{time.strftime("%Y%m%d%H%M%S")}')
+        os.rename(DOMAIN_CER_PATH, f'{DOMAIN_CER_PATH}.{time.strftime("%Y%m%d%H%M%S")}')
+
         create_domain_key(CERT_KEY_PATH)
         on_before_issue()
         send_new_order()
