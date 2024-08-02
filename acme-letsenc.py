@@ -24,28 +24,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DEFAULT_CA = 'zerossl'
+DEFAULT_CA = 'letsencrypt'
 DEFAULT_TYPE = 'dns'
 DEFAULT_ACCOUNT_KEY_LENGTH = 'ec-256'
 DEFAULT_DOMAIN_KEY_LENGTH = 'ec-256'
 ECC_NAME = 'prime256v1'
 ECC_KEY_LEN = '256'
-CA_ZEROSSL = 'https://acme.zerossl.com/v2/DV90'
-ZERO_EAB_ENDPOINT = 'https://api.zerossl.com/acme/eab-credentials-email'
+# CA_ZEROSSL = 'https://acme.zerossl.com/v2/DV90'
+# ZERO_EAB_ENDPOINT = 'https://api.zerossl.com/acme/eab-credentials-email'
 
-# 必要的 - Acme2J
-# OPENSSL = os.path.abspath(windows() ? "openssl/bin/openssl.exe" : "/usr/bin/openssl").getAbsolutePath()
-# CURL = os.path.abspath(windows() ? "curl/bin/curl.exe" : "/usr/bin/curl").getAbsolutePath()
+CA_LETSENCRYPT_V2 = "https://acme-v02.api.letsencrypt.org/directory"
+CA_LETSENCRYPT_V2_TEST = "https://acme-staging-v02.api.letsencrypt.org/directory"
+# CA_LETSENCRYPT_V2 = "https://acme-staging-v02.api.letsencrypt.org/directory"
+CA_DIR = "./ca/acme-v02.api.letsencrypt.org/directory"
+
+# 创建目录
+if not os.path.exists(CA_DIR):
+    os.makedirs(CA_DIR)
 
 # account.key
-ACCOUNT_KEY = os.path.abspath('account.key')
+ACCOUNT_KEY = os.path.abspath(CA_DIR+'/'+'account.key')
 
 # account.json
-ACCOUNT_JSON = os.path.abspath('account.json')
+ACCOUNT_JSON = os.path.abspath(CA_DIR+'/'+'account.json')
 
 # ca.conf
 CA_EMAIL = 'thankyou@' + os.urandom(8).hex() + '.com'  # 如果不输入 email=youremail，则随机生成
-CA_CONF = os.path.abspath('ca.conf')
+CA_CONF = os.path.abspath(CA_DIR+'/'+'ca.conf')
 ACCOUNT_URL = ''  # 在申请证书时要用
 CA_EAB_KEY_ID = ''
 CA_EAB_HMAC_KEY = ''
@@ -63,12 +68,13 @@ CA_CERT_PATH = ''  # ./domain/ca.cer
 DOMAIN_CER_PATH = ''  # ./domain/domain.cer#acme.sh -> CERT_PATH
 FULLCHAIN_CER_PATH = ''  # ./domain/fullchain.cer#acme.sh -> CERT_FULLCHAIN_PATH
 
-# zerosslAcmeApi
-NEW_NONCE = 'https://acme.zerossl.com/v2/DV90/newNonce'
-NEW_ACCOUNT = 'https://acme.zerossl.com/v2/DV90/newAccount'
-NEW_ORDER = 'https://acme.zerossl.com/v2/DV90/newOrder'
-REVOKE_CERT = 'https://acme.zerossl.com/v2/DV90/revokeCert'
-KEY_CHANGE = 'https://acme.zerossl.com/v2/DV90/keyChange'
+# letsencrypt
+NEW_ACCOUNT =  "https://acme-v02.api.letsencrypt.org/acme/new-acct"
+NEW_NONCE = "https://acme-v02.api.letsencrypt.org/acme/new-nonce"
+NEW_ORDER = "https://acme-v02.api.letsencrypt.org/acme/new-order"
+# renewalInfo = "https://acme-v02.api.letsencrypt.org/draft-ietf-acme-ari-03/renewalInfo"
+REVOKE_CERT = "https://acme-v02.api.letsencrypt.org/acme/revoke-cert"
+
 
 # jwk信息不变
 JWK = ''
@@ -219,14 +225,14 @@ def check_email(email):
 
 
 # 初始化 zerossl api
-def init_zerossl_api():
-    logger.info('>>> 初始化 zerossl api')
+def init_letsencrypt_api():
+    logger.info('>>> 初始化 letsencrypt api')
     headers = {
         'user-agent': 'acme.sh/3.0.8 (https://github.com/acmesh-official/acme.sh)',
         'accept': '*/*'
     }
     payload = None
-    response = requests.request("GET", CA_ZEROSSL, headers=headers, data=payload, verify=False)
+    response = requests.request("GET", CA_LETSENCRYPT_V2, headers=headers, data=payload, verify=False)
     json_body = response.json()
 
     logger.info(f'http_header: {response.headers}')
@@ -237,7 +243,7 @@ def init_zerossl_api():
     NEW_ACCOUNT = json_body['newAccount']
     NEW_ORDER = json_body['newOrder']
     REVOKE_CERT = json_body['revokeCert']
-    KEY_CHANGE = json_body['keyChange']
+    # KEY_CHANGE = json_body['keyChange']
 
 
 def init_account_info(args):
@@ -351,7 +357,7 @@ def calc_accout_key_hash(account_key_path):
     return base64_hash
 
 
-# 获取账户的kid
+# 获取账户的kid zerossl
 def get_eab_kid():
     logger.info('>>> 获取 eab_kid')
 
@@ -402,35 +408,52 @@ def reg_account():
         'content-type': 'application/jose+json',
     }
 
+
+    #0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
     #  inner protected & payload
-    eab_protected = f'{{"alg":"HS256","kid":"{CA_EAB_KEY_ID}","url":"{NEW_ACCOUNT}"}}'
-    eab_payload = ''
-    eab_protected64 = base64.urlsafe_b64encode(eab_protected.encode('utf-8')).decode('utf-8').replace('=', '')
-    eab_payload64 = base64.urlsafe_b64encode(calc_jwk(ACCOUNT_KEY).encode('utf-8')).decode('utf-8').replace('=', '')
+    # eab_protected = f'{{"alg":"HS256","kid":"{CA_EAB_KEY_ID}","url":"{NEW_ACCOUNT}"}}'
+    # eab_payload = ''
+    # eab_protected64 = base64.urlsafe_b64encode(eab_protected.encode('utf-8')).decode('utf-8').replace('=', '')
+    # eab_payload64 = base64.urlsafe_b64encode(calc_jwk(ACCOUNT_KEY).encode('utf-8')).decode('utf-8').replace('=', '')
+    #
+    # eab_sign_t = f'{eab_protected64}.{eab_payload64}'
+    # # keyhex = base64.urlsafe_b64decode(CA_EAB_HMAC_KEY + '==').hex()
+    # keyhex = base64.urlsafe_b64decode(CA_EAB_HMAC_KEY + '==')
+    #
+    # # 签名
+    # eab_signature = base64.urlsafe_b64encode(
+    #     hmac.new(keyhex, eab_sign_t.encode('utf-8'), hashlib.sha256).digest()).decode(
+    #     'utf-8').replace('=', '')
+    #
+    # external_binding = f',"externalAccountBinding":{{"protected":"{eab_protected64}", "payload":"{eab_payload64}", "signature":"{eab_signature}"}}'
+    # email_sg = f'"contact": ["mailto:{CA_EMAIL}"], '
+    # regjson = "{%s\"termsOfServiceAgreed\": true%s}" % (email_sg, external_binding)
+    #
+    # logger.info(f'regjson: {regjson}')
+    #
+    # # outer protected & payload
+    # payload64 = base64.urlsafe_b64encode(regjson.encode('utf-8')).decode('utf-8').replace('=', '')
+    #
+    # # {"nonce": "NvEMIkVbwc9nrWYvN7KWUmF6HwbXsG1ACYz7sE_lztw", "url": "https://acme.zerossl.com/v2/DV90/newAccount", "alg": "ES256", "jwk": {"crv": "P-256", "kty": "EC", "x": "degDMApXKlWtEvsigjAFuhqSuUCqMzE2M5pQmwxJDbk", "y": "Znb6T-XQ2J9RL-GdHui8_zf6MEeh-sW_aaTqRyKOTxk"}}
+    # protected = f'{{"nonce": "{new_nonce()}", "url": "{NEW_ACCOUNT}", "alg": "ES{ECC_KEY_LEN}", "jwk": {calc_jwk(ACCOUNT_KEY)}}}'
+    # protected64 = base64.urlsafe_b64encode(protected.encode('utf-8')).decode('utf-8').replace('=', '')
+    #
+    # # 签名
+    # signature = sign_base64_url_replace(f'{protected64}.{payload64}', ACCOUNT_KEY)
 
-    eab_sign_t = f'{eab_protected64}.{eab_payload64}'
-    # keyhex = base64.urlsafe_b64decode(CA_EAB_HMAC_KEY + '==').hex()
-    keyhex = base64.urlsafe_b64decode(CA_EAB_HMAC_KEY + '==')
 
-    # 签名
-    eab_signature = base64.urlsafe_b64encode(
-        hmac.new(keyhex, eab_sign_t.encode('utf-8'), hashlib.sha256).digest()).decode(
-        'utf-8').replace('=', '')
+    #0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 
-    external_binding = f',"externalAccountBinding":{{"protected":"{eab_protected64}", "payload":"{eab_payload64}", "signature":"{eab_signature}"}}'
-    email_sg = f'"contact": ["mailto:{CA_EMAIL}"], '
-    regjson = "{%s\"termsOfServiceAgreed\": true%s}" % (email_sg, external_binding)
 
-    logger.info(f'regjson: {regjson}')
-
-    # outer protected & payload
-    payload64 = base64.urlsafe_b64encode(regjson.encode('utf-8')).decode('utf-8').replace('=', '')
-
-    # {"nonce": "NvEMIkVbwc9nrWYvN7KWUmF6HwbXsG1ACYz7sE_lztw", "url": "https://acme.zerossl.com/v2/DV90/newAccount", "alg": "ES256", "jwk": {"crv": "P-256", "kty": "EC", "x": "degDMApXKlWtEvsigjAFuhqSuUCqMzE2M5pQmwxJDbk", "y": "Znb6T-XQ2J9RL-GdHui8_zf6MEeh-sW_aaTqRyKOTxk"}}
-    protected = f'{{"nonce": "{new_nonce()}", "url": "{NEW_ACCOUNT}", "alg": "ES{ECC_KEY_LEN}", "jwk": {calc_jwk(ACCOUNT_KEY)}}}'
+    # {"protected": "eyJub25jZSI6ICJWYkhjR0t3bmFGRzFpMEhWbWFVRG9CVm5JSFFzUFU2VWZOWmhSZEdNaEZkVHFwdS1TMEEiLCAidXJsIjogImh0dHBzOi8vYWNtZS12MDIuYXBpLmxldHNlbmNyeXB0Lm9yZy9hY21lL25ldy1hY2N0IiwgImFsZyI6ICJFUzI1NiIsICJqd2siOiB7ImNydiI6ICJQLTI1NiIsICJrdHkiOiAiRUMiLCAieCI6ICJteEhrRmhaNTQzLURlQktSYjBGNFpBeE9lLW9yRTFzREY5MFdrRDVRN09rIiwgInkiOiAibDVSM1o3eUEyOVVDR0J2d1dJR3dqTmthYjA3NXZDdUptZEFCbzNUT2taWSJ9fQ", "payload": "eyJjb250YWN0IjogWyJtYWlsdG86ZW1haWw9ZXdlZmhlc3JoQGRzZ3NkLmNvbSJdLCAidGVybXNPZlNlcnZpY2VBZ3JlZWQiOiB0cnVlfQ", "signature": "QT6RAG0qGxc35ShUGmWfqTH3XUgiX09jIc2xXWwFpHh7pZwbvkaflfPEM28OlK2ZPCMSsmDSqlY_YoAapCFOaQ"}
+    # eyJub25jZSI6ICJWYkhjR0t3bmFGRzFpMEhWbWFVRG9CVm5JSFFzUFU2VWZOWmhSZEdNaEZkVHFwdS1TMEEiLCAidXJsIjogImh0dHBzOi8vYWNtZS12MDIuYXBpLmxldHNlbmNyeXB0Lm9yZy9hY21lL25ldy1hY2N0IiwgImFsZyI6ICJFUzI1NiIsICJqd2siOiB7ImNydiI6ICJQLTI1NiIsICJrdHkiOiAiRUMiLCAieCI6ICJteEhrRmhaNTQzLURlQktSYjBGNFpBeE9lLW9yRTFzREY5MFdrRDVRN09rIiwgInkiOiAibDVSM1o3eUEyOVVDR0J2d1dJR3dqTmthYjA3NXZDdUptZEFCbzNUT2taWSJ9fQ
+    # {"nonce": "VbHcGKwnaFG1i0HVmaUDoBVnIHQsPU6UfNZhRdGMhFdTqpu-S0A", "url": "https://acme-v02.api.letsencrypt.org/acme/new-acct", "alg": "ES256", "jwk": {"crv": "P-256", "kty": "EC", "x": "mxHkFhZ543-DeBKRb0F4ZAxOe-orE1sDF90WkD5Q7Ok", "y": "l5R3Z7yA29UCGBvwWIGwjNkab075vCuJmdABo3TOkZY"}}
+    protected = f'{{"nonce": "{new_nonce()}", "url": "{NEW_ACCOUNT}", "alg": "ES256", "jwk": {calc_jwk(ACCOUNT_KEY)}}}'
     protected64 = base64.urlsafe_b64encode(protected.encode('utf-8')).decode('utf-8').replace('=', '')
-
-    # 签名
+    # eyJjb250YWN0IjogWyJtYWlsdG86ZW1haWw9ZXdlZmhlc3JoQGRzZ3NkLmNvbSJdLCAidGVybXNPZlNlcnZpY2VBZ3JlZWQiOiB0cnVlfQ
+    # {"contact": ["mailto:email=ewefhesrh@dsgsd.com"], "termsOfServiceAgreed": true}
+    payload = f'{{"contact": ["mailto:email={CA_EMAIL}"], "termsOfServiceAgreed": true}}'
+    payload64 = base64.urlsafe_b64encode(payload.encode('utf-8')).decode('utf-8').replace('=', '')
     signature = sign_base64_url_replace(f'{protected64}.{payload64}', ACCOUNT_KEY)
 
     data_body = f'{{"protected":"{protected64}", "payload":"{payload64}", "signature":"{signature}"}}'
@@ -457,6 +480,7 @@ def reg_account():
     with open(CA_CONF, 'a') as f:
         account_url = http_header["Location"] if 'Location' in http_header else http_header["location"]
         account_key_hash = calc_accout_key_hash(ACCOUNT_KEY)
+        f.write(f"CA_EMAIL='{CA_EMAIL}'\n")
         f.write(f"ACCOUNT_URL='{account_url}'\n")
         f.write(f"CA_KEY_HASH='{account_key_hash}'\n")
 
@@ -555,7 +579,7 @@ def on_before_issue():
     le_domain = MAIN_DOMAIN
     le_alt = ALT_DOMAINS
     le_webroot = 'dns'
-    le_api = CA_ZEROSSL
+    le_api = CA_LETSENCRYPT_V2
     le_keylength = DEFAULT_DOMAIN_KEY_LENGTH
 
     save_domain_conf('Le_Domain', le_domain)
@@ -579,7 +603,6 @@ def send_new_order():
         domains = '{"type":"dns","value":"'+(MAIN_DOMAIN+','+ALT_DOMAINS).replace(',', '"},{"type":"dns","value":"')+'"}'
     else:
         domains = '{"type":"dns","value":"'+MAIN_DOMAIN+'"}'
-
 
 
     payload = f'{{"identifiers": [{domains}]}}'
@@ -745,7 +768,7 @@ def continue_verify(domain_conf_path):
         elif status == 'valid':
             logger.info(f'域名 {domain} 验证成功')
             continue
-        elif status == 'processing':
+        elif status == 'processing' or status == 'pending': # TODO challenge status
             # 3 验证 dns 记录
             logger.info('>>> >>> >>> 验证 DNS 记录')
             while not status == 'valid':
@@ -868,7 +891,7 @@ def finalize_order(domain_conf_path, csr_path):
     logger.info('>>> 发送 csr')
 
     order_finalize_url = read_config('Le_OrderFinalize', domain_conf_path)
-    link_order_url = read_config('Le_LinkOrder', domain_conf_path)
+    # link_order_url = read_config('Le_LinkOrder', domain_conf_path)
 
     # 1 读取 csr
     with open(csr_path, 'r') as f:
@@ -903,40 +926,20 @@ def finalize_order(domain_conf_path, csr_path):
 
     status = json_body['status']
 
-    if status == 'processing':
-        link_order_url = http_header['Location']
+    # if status == 'processing':
+    #     link_order_url = http_header['Location']
+
+
+    if status == 'invalid':
+        logger.error('!!! 出错了')
+        raise Exception('出错了')
+    elif status == 'valid':
+        link_cert = json_body['certificate']
+        save_domain_conf('Le_LinkCert', link_cert)
+        logger.info('\n######################################################\n####            申请成功，开始下发证书              ####\n######################################################')
     else:
         logger.error(f'超出本程序处理范围: {status}，忽略错误，尝试下一步')
         # raise Exception(f'超出本程序处理范围: {status}')
-
-    # 3 send link order, util status=valid
-    while not status == 'valid':
-        logger.info(f'>>> >>> >>> send link order')
-        protected = f'{{"nonce": "{new_nonce()}", "url": "{link_order_url}", "alg": "ES256", "kid": "{read_config("ACCOUNT_URL", CA_CONF)}"}}'
-        protected64 = base64.urlsafe_b64encode(protected.encode()).decode().replace('=', '')
-        payload64 = ''
-        signature = sign_base64_url_replace(f'{protected64}.{payload64}', ACCOUNT_KEY)
-        data_body = f'{{"protected": "{protected64}", "payload": "{payload64}", "signature": "{signature}"}}'
-
-        response = requests.request("POST", link_order_url, headers=headers, data=data_body, verify=False)
-        http_header = response.headers
-        json_body = response.json()
-        logger.info(f'http_header: {http_header}')
-        logger.info(f'json_body: {json_body}')
-
-        SHARED_NONCE = http_header['Replay-Nonce']
-        status = json_body['status']
-
-        if status == 'processing':
-            logger.info('>>> >>> >>> >>> 等待 10s')
-            time.sleep(10)
-        elif status == 'invalid':
-            logger.error('!!! 出错了')
-            raise Exception('出错了')
-        elif status == 'valid':
-            link_cert = json_body['certificate']
-            save_domain_conf('Le_LinkCert', link_cert)
-            logger.info('\n######################################################\n####            申请成功，开始下发证书              ####\n######################################################')
 
 
 def download_cert(domain_conf_path, fullchain_path):
@@ -998,6 +1001,7 @@ def check_args(args):
 
 
 
+
 # ***********************************************************************************
 #
 #       @author: ssldog.com
@@ -1035,6 +1039,20 @@ if __name__ == '__main__':
 
     option = args[0]
 
+    # init_domain_info(args)
+    # init_account_info(args)
+    #
+    # init_letsencrypt_api()
+    # create_account_key(ACCOUNT_KEY)
+    # calc_jwk(ACCOUNT_KEY)
+    # reg_account()
+    #
+    # create_domain_key(CERT_KEY_PATH)
+    # on_before_issue()
+    # send_new_order()
+    # get_each_authorization()
+
+
     if option == 'issue':
         logger.info('>>> 开始申请证书')
 
@@ -1045,10 +1063,10 @@ if __name__ == '__main__':
             logger.info(f'>>> 已存在证书申请信息，请使用其他操作，或者删除 {MAIN_DOMAIN} 文件夹')
             raise Exception(f'已存在证书申请信息，请使用其他操作，或者删除 {MAIN_DOMAIN} 文件夹')
 
-        init_zerossl_api()
+        init_letsencrypt_api()
         create_account_key(ACCOUNT_KEY)
         calc_jwk(ACCOUNT_KEY)
-        get_eab_kid()
+        # get_eab_kid() # zerossl
         reg_account()
 
         create_domain_key(CERT_KEY_PATH)
@@ -1065,7 +1083,7 @@ if __name__ == '__main__':
         init_domain_info(args)
         init_account_info(args)
 
-        init_zerossl_api()
+        init_letsencrypt_api()
 
         continue_verify(DOMAIN_CONF_PATH)
         create_csr(domain_key_path=CERT_KEY_PATH,domain_conf_path=DOMAIN_CONF_PATH,csr_conf_path=CSR_CONF_PATH,csr_path=CSR_PATH)
@@ -1078,10 +1096,10 @@ if __name__ == '__main__':
         init_domain_info(args)
         init_account_info(args)
 
-        init_zerossl_api()
+        init_letsencrypt_api()
         create_account_key(ACCOUNT_KEY)
         calc_jwk(ACCOUNT_KEY)
-        get_eab_kid()
+        # get_eab_kid() # zerossl
         reg_account()
 
         # 重命名原来的 domain.conf 和 domian.cer

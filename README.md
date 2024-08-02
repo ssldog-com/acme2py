@@ -8,12 +8,14 @@ The CA is [zerossl](https://zerossl.com), and the account private key and domain
 
 ## 功能 / Function
 * ✅ zerossl
-* ❌ other CA
+* ✅ let‘sencrypt
+* ✅ ECC
+* ❌ RSA
 * ✅ issue
 * ✅ renew
 * ❌ revoke
 * ✅ idn / 国际化域名
-* ✅ wildcard
+* ✅ wildcard / 泛域名
 * ❌ ip / ip证书
 * ✅ multi domain / 多域名
 
@@ -27,13 +29,14 @@ The CA is [zerossl](https://zerossl.com), and the account private key and domain
 
 ### 👁 安装库 / libs needed
 ````bash
-pip install cryptography
+pip install cryptography # ?
 pip install pycryptodome
 pip install requests
 ````
 ### ▶️ 运行 / run
 ````bash
-python acme-zerossl.py --email=youdemail --domain=domain1.com --domian=*.domain1.com --domain=domain2 ... 
+python [ca] [options] --email=youdemail --domain=domain1.com --domian=*.domain1.com --domain=domain2 ... 
+# ca: acme-zerossl.py acme-letsenc.py
 # 操作/options: issue continue renew
 ````
 
@@ -60,6 +63,7 @@ python renew --email=example@email.com --domain=example.com --domian=*.example.c
 
 ```
 ├── .gitignore                              
+├── ca                  // 只有 Let‘sencrypt 使用这个目录                    
 ├── account.key         // -> /root/.acme.sh/ca/acme.zerossl.com/v2/DV90/account.key
 ├── account.json        // -> /root/.acme.sh/ca/acme.zerossl.com/v2/DV90/account.json
 ├── ca.conf             // -> /root/.acme.sh/ca/acme.zerossl.com/v2/DV90/ca.conf
@@ -72,10 +76,12 @@ python renew --email=example@email.com --domain=example.com --domian=*.example.c
 └── acme-zerossl.py
 ```
 所有文件根路径默认在项目目录下。
-与acme.sh的配置文件基本相同。
+与 acme.sh 的配置文件基本相同。
+Let‘sencrypt 的目录结构与 acme.sh 相同。
 
 The root path of all files is in the project directory.
 Using the same configuration file with acme.sh.
+Let'sencrypt directory structure is the same as acme.sh.
 
 
 ## ⚠ 注意 / Notice
