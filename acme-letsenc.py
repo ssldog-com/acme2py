@@ -1,22 +1,26 @@
 import hashlib
 import hmac
-import json
 import re
 import time
-
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import ec, utils
-from cryptography.hazmat.backends import default_backend
 import binascii
-from Crypto.PublicKey import ECC
 import base64
 import logging
 import os
 import sys
 
 import requests
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec, utils
+from cryptography.hazmat.backends import default_backend
+from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtendedKeyUsageOID
 
+# 忽略 warnings.warn
 requests.packages.urllib3.disable_warnings()
+
+# 日志
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [%(funcName)-24s]# %(message)s",
@@ -30,15 +34,13 @@ DEFAULT_ACCOUNT_KEY_LENGTH = 'ec-256'
 DEFAULT_DOMAIN_KEY_LENGTH = 'ec-256'
 ECC_NAME = 'prime256v1'
 ECC_KEY_LEN = '256'
-# CA_ZEROSSL = 'https://acme.zerossl.com/v2/DV90'
-# ZERO_EAB_ENDPOINT = 'https://api.zerossl.com/acme/eab-credentials-email'
 
 CA_LETSENCRYPT_V2 = "https://acme-v02.api.letsencrypt.org/directory"
 CA_LETSENCRYPT_V2_TEST = "https://acme-staging-v02.api.letsencrypt.org/directory"
 # CA_LETSENCRYPT_V2 = "https://acme-staging-v02.api.letsencrypt.org/directory"
 CA_DIR = "./ca/acme-v02.api.letsencrypt.org/directory"
 
-# 创建目录
+# 创建ca目录
 if not os.path.exists(CA_DIR):
     os.makedirs(CA_DIR)
 
@@ -224,7 +226,7 @@ def check_email(email):
 # ***********************************************************************************
 
 
-# 初始化 zerossl api
+# 初始化 lets api
 def init_letsencrypt_api():
     logger.info('>>> 初始化 letsencrypt api')
     headers = {
@@ -243,7 +245,6 @@ def init_letsencrypt_api():
     NEW_ACCOUNT = json_body['newAccount']
     NEW_ORDER = json_body['newOrder']
     REVOKE_CERT = json_body['revokeCert']
-    # KEY_CHANGE = json_body['keyChange']
 
 
 def init_account_info(args):
@@ -274,30 +275,37 @@ def init_account_info(args):
     return CA_EMAIL
 
 
-# 创建账户私钥
+# 创建账户私钥 TODO cryptography
 def create_account_key(account_key_path):
     logger.info('>>> 创建账户私钥')
     if os.path.exists(account_key_path) and os.path.getsize(account_key_path) > 0:
         logger.info(f'使用已有账户私钥: {account_key_path}')
         return
 
-    mykey = ECC.generate(curve='p256')
-    account_key = mykey.export_key(format='PEM')
-    logger.info(f'account_key: {account_key}')
+    # 生成一个P-256曲线的ECC私钥
+    private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
 
-    # 保存到 account.key
-    with open(account_key_path, 'w') as f:
-        f.write(account_key)
+    pem = private_key.private_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption()
+    )
 
-    if os.path.exists(ACCOUNT_KEY):
-        logger.info(f'账户私钥保存成功: {ACCOUNT_KEY}')
+    logger.info(f'account.key: {pem}')
+
+    # 将PEM格式的私钥保存到文件
+    with open(account_key_path, "wb") as key_file:
+        key_file.write(pem)
+
+    if os.path.exists(account_key_path) and os.path.getsize(account_key_path) > 0:
+        logger.info(f'账户私钥保存成功: {account_key_path}')
     else:
         logger.error('!!! 账户私钥保存失败')
         # sys.exit(1)
         raise Exception('账户私钥保存失败')
 
 
-# 计算 jwk
+# 计算 jwk TODO cryptography
 def calc_jwk(account_key_path):
 
     global JWK
@@ -310,18 +318,31 @@ def calc_jwk(account_key_path):
     with open(account_key_path, 'r') as f:
         account_key = f.read()
 
-    # 从account_key_test中加载密钥
-    mykey = ECC.import_key(account_key)
-    public_key = mykey.public_key()
+    # 将account_key字符串转换为字节
+    pem_key = account_key.encode()
 
-    # jwk 获取 printx printy
-    logger.info(f'public_key: {public_key}')
-    x, y = public_key.pointQ.x, public_key.pointQ.y
+    # 从PEM格式加载椭圆曲线私钥
+    private_key = serialization.load_pem_private_key(
+    pem_key, # PEM格式的密钥字节
+    password=None, # 如果密钥未加密，密码为None
+    backend=default_backend() # 默认的backend
+    )
+
+    # 确保加载的私钥是ECC类型的
+    if isinstance(private_key, ec.EllipticCurvePrivateKey):
+        # 获取公钥
+        public_key = private_key.public_key()
+
+    # 获取x和y坐标
+    public_numbers = public_key.public_numbers()
+    x = public_numbers.x
+    y = public_numbers.y
+
     logger.info(f'x: {x}, y: {y}')
 
     # 将x和y坐标转换为字节
-    x_bytes = x.to_bytes(32)
-    y_bytes = y.to_bytes(32)
+    x_bytes = x.to_bytes(32, 'big')
+    y_bytes = y.to_bytes(32, 'big')
 
     # 将x和y坐标转换为Base64编码 urlsafe_b64encode 去掉=号
     x64 = base64.urlsafe_b64encode(x_bytes).decode('utf-8').replace('=', '')
@@ -357,44 +378,6 @@ def calc_accout_key_hash(account_key_path):
     return base64_hash
 
 
-# 获取账户的kid zerossl
-def get_eab_kid():
-    logger.info('>>> 获取 eab_kid')
-
-    global CA_EMAIL, CA_EAB_KEY_ID, CA_EAB_HMAC_KEY
-    if os.path.exists(CA_CONF) and os.path.getsize(CA_CONF) > 0:
-        logger.info('使用已有 ca.conf 配置文件')
-        CA_EMAIL = read_config('CA_EMAIL', CA_CONF)
-        CA_EAB_KEY_ID = read_config('CA_EAB_KEY_ID', CA_CONF)
-        CA_EAB_HMAC_KEY = read_config('CA_EAB_HMAC_KEY', CA_CONF)
-        return read_config('CA_EAB_KEY_ID', CA_CONF)
-
-
-    headers = {
-        'user-agent': 'acme.sh/3.0.8 (https://github.com/acmesh-official/acme.sh)',
-        'accept': '*/*',
-        'content-type': 'application/x-www-form-urlencoded'
-    }
-    data_body = f'email={CA_EMAIL}'
-
-    response = requests.request("POST", "https://api.zerossl.com/acme/eab-credentials-email", headers=headers,
-                                data=data_body, verify=False)
-    http_header = response.headers
-    json_body = response.json()
-
-    logger.info(f'http_header: {http_header} ')
-    logger.info(f'json_body: {json_body}')
-
-    CA_EAB_KEY_ID = json_body['eab_kid']
-    CA_EAB_HMAC_KEY = json_body['eab_hmac_key']
-
-    # 保存到 ca.conf
-    with open(CA_CONF, 'a') as f:
-        f.write(f"CA_EMAIL='{CA_EMAIL}'\n")
-        f.write(f"CA_EAB_KEY_ID='{CA_EAB_KEY_ID}'\n")
-        f.write(f"CA_EAB_HMAC_KEY='{CA_EAB_HMAC_KEY}'\n")
-
-
 # 注册账户
 def reg_account():
     logger.info('>>> 注册账户')
@@ -407,43 +390,6 @@ def reg_account():
         'accept': '*/*',
         'content-type': 'application/jose+json',
     }
-
-
-    #0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-    #  inner protected & payload
-    # eab_protected = f'{{"alg":"HS256","kid":"{CA_EAB_KEY_ID}","url":"{NEW_ACCOUNT}"}}'
-    # eab_payload = ''
-    # eab_protected64 = base64.urlsafe_b64encode(eab_protected.encode('utf-8')).decode('utf-8').replace('=', '')
-    # eab_payload64 = base64.urlsafe_b64encode(calc_jwk(ACCOUNT_KEY).encode('utf-8')).decode('utf-8').replace('=', '')
-    #
-    # eab_sign_t = f'{eab_protected64}.{eab_payload64}'
-    # # keyhex = base64.urlsafe_b64decode(CA_EAB_HMAC_KEY + '==').hex()
-    # keyhex = base64.urlsafe_b64decode(CA_EAB_HMAC_KEY + '==')
-    #
-    # # 签名
-    # eab_signature = base64.urlsafe_b64encode(
-    #     hmac.new(keyhex, eab_sign_t.encode('utf-8'), hashlib.sha256).digest()).decode(
-    #     'utf-8').replace('=', '')
-    #
-    # external_binding = f',"externalAccountBinding":{{"protected":"{eab_protected64}", "payload":"{eab_payload64}", "signature":"{eab_signature}"}}'
-    # email_sg = f'"contact": ["mailto:{CA_EMAIL}"], '
-    # regjson = "{%s\"termsOfServiceAgreed\": true%s}" % (email_sg, external_binding)
-    #
-    # logger.info(f'regjson: {regjson}')
-    #
-    # # outer protected & payload
-    # payload64 = base64.urlsafe_b64encode(regjson.encode('utf-8')).decode('utf-8').replace('=', '')
-    #
-    # # {"nonce": "NvEMIkVbwc9nrWYvN7KWUmF6HwbXsG1ACYz7sE_lztw", "url": "https://acme.zerossl.com/v2/DV90/newAccount", "alg": "ES256", "jwk": {"crv": "P-256", "kty": "EC", "x": "degDMApXKlWtEvsigjAFuhqSuUCqMzE2M5pQmwxJDbk", "y": "Znb6T-XQ2J9RL-GdHui8_zf6MEeh-sW_aaTqRyKOTxk"}}
-    # protected = f'{{"nonce": "{new_nonce()}", "url": "{NEW_ACCOUNT}", "alg": "ES{ECC_KEY_LEN}", "jwk": {calc_jwk(ACCOUNT_KEY)}}}'
-    # protected64 = base64.urlsafe_b64encode(protected.encode('utf-8')).decode('utf-8').replace('=', '')
-    #
-    # # 签名
-    # signature = sign_base64_url_replace(f'{protected64}.{payload64}', ACCOUNT_KEY)
-
-
-    #0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-
 
     # {"protected": "eyJub25jZSI6ICJWYkhjR0t3bmFGRzFpMEhWbWFVRG9CVm5JSFFzUFU2VWZOWmhSZEdNaEZkVHFwdS1TMEEiLCAidXJsIjogImh0dHBzOi8vYWNtZS12MDIuYXBpLmxldHNlbmNyeXB0Lm9yZy9hY21lL25ldy1hY2N0IiwgImFsZyI6ICJFUzI1NiIsICJqd2siOiB7ImNydiI6ICJQLTI1NiIsICJrdHkiOiAiRUMiLCAieCI6ICJteEhrRmhaNTQzLURlQktSYjBGNFpBeE9lLW9yRTFzREY5MFdrRDVRN09rIiwgInkiOiAibDVSM1o3eUEyOVVDR0J2d1dJR3dqTmthYjA3NXZDdUptZEFCbzNUT2taWSJ9fQ", "payload": "eyJjb250YWN0IjogWyJtYWlsdG86ZW1haWw9ZXdlZmhlc3JoQGRzZ3NkLmNvbSJdLCAidGVybXNPZlNlcnZpY2VBZ3JlZWQiOiB0cnVlfQ", "signature": "QT6RAG0qGxc35ShUGmWfqTH3XUgiX09jIc2xXWwFpHh7pZwbvkaflfPEM28OlK2ZPCMSsmDSqlY_YoAapCFOaQ"}
     # eyJub25jZSI6ICJWYkhjR0t3bmFGRzFpMEhWbWFVRG9CVm5JSFFzUFU2VWZOWmhSZEdNaEZkVHFwdS1TMEEiLCAidXJsIjogImh0dHBzOi8vYWNtZS12MDIuYXBpLmxldHNlbmNyeXB0Lm9yZy9hY21lL25ldy1hY2N0IiwgImFsZyI6ICJFUzI1NiIsICJqd2siOiB7ImNydiI6ICJQLTI1NiIsICJrdHkiOiAiRUMiLCAieCI6ICJteEhrRmhaNTQzLURlQktSYjBGNFpBeE9lLW9yRTFzREY5MFdrRDVRN09rIiwgInkiOiAibDVSM1o3eUEyOVVDR0J2d1dJR3dqTmthYjA3NXZDdUptZEFCbzNUT2taWSJ9fQ
@@ -489,7 +435,7 @@ def reg_account():
 
 
 # 初始化域名信息
-def init_domain_info(agrs):
+def init_domain_info(args):
     logger.info('>>> 初始化域名信息')
     # domain = str(domain.encode('idna'), 'utf-8')
 
@@ -539,21 +485,27 @@ def init_domain_info(agrs):
     FULLCHAIN_CER_PATH = os.path.abspath(f'{domain_home}/fullchian.cer')
 
 
-# 创建域名私钥
+# 创建域名私钥 TODO cryptography
 def create_domain_key(domain_key_path):
     logger.info('>>> 创建域名私钥')
     if os.path.exists(domain_key_path) and os.path.getsize(domain_key_path) > 0:
         logger.info(f'使用已有域名私钥: {domain_key_path}')
         return
 
-    d_key = ECC.generate(curve='p256')
-    domain_key = d_key.export_key(format='PEM')
-    logger.info(f'domain_key: {domain_key}')
+    # 生成一个P-256曲线的ECC私钥
+    private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
 
-    # 保存到 ./domain/domain.key
-    domain_key_path = domain_key_path.replace('*.', '')
-    with open(domain_key_path, 'w') as f:
-        f.write(domain_key)
+    pem = private_key.private_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption()
+    )
+
+    logger.info(f'domain.key: {pem}')
+
+    # 将PEM格式的私钥保存到文件
+    with open(domain_key_path, "wb") as key_file:
+        key_file.write(pem)
 
     if os.path.exists(domain_key_path) and os.path.getsize(domain_key_path) > 0:
         logger.info(f'域名私钥保存成功: {domain_key_path}')
@@ -822,10 +774,15 @@ def create_csr(domain_key_path,domain_conf_path, csr_conf_path, csr_path):
     # # 读取 domain.conf
     MAIN_DOMAIN = read_config('Le_Domain', domain_conf_path)
     ALT_DOMAINS = read_config('Le_Alt', domain_conf_path)
-    domains = f'{MAIN_DOMAIN},{ALT_DOMAINS}'
-    # subjectAltName=DNS:yy.test.domain.com,DNS:*.yy.test.domain.com,DNS:zz.test.domain.com,DNS:*.zz.test.domain.com
-    subject_alt_name = ','.join([f'DNS:{d}' for d in domains.split(',')])
-    #
+
+    if ALT_DOMAINS:
+        domains = f'{MAIN_DOMAIN},{ALT_DOMAINS}'
+        # subjectAltName=DNS:yy.test.domain.com,DNS:*.yy.test.domain.com,DNS:zz.test.domain.com,DNS:*.zz.test.domain.com
+        subject_alt_name = ','.join([f'DNS:{d}' for d in domains.split(',')])
+    else:
+        domains = MAIN_DOMAIN
+        subject_alt_name = f'DNS:{MAIN_DOMAIN}'
+
     # 写入 domain.csr.conf
     with open(csr_conf_path, 'w') as f:
         f.write("[ req_distinguished_name ]\n[ req ]\n" +
@@ -837,13 +794,6 @@ def create_csr(domain_key_path,domain_conf_path, csr_conf_path, csr_path):
                 )
 
     # 2 生成 domain.csr
-    from cryptography import x509
-    from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.x509.oid import NameOID
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.x509.oid import ExtendedKeyUsageOID
-
     with open(domain_key_path, "rb") as key_file:
         private_key = serialization.load_pem_private_key(
             key_file.read(),
@@ -891,7 +841,7 @@ def finalize_order(domain_conf_path, csr_path):
     logger.info('>>> 发送 csr')
 
     order_finalize_url = read_config('Le_OrderFinalize', domain_conf_path)
-    # link_order_url = read_config('Le_LinkOrder', domain_conf_path)
+    link_order_url = read_config('Le_LinkOrder', domain_conf_path)
 
     # 1 读取 csr
     with open(csr_path, 'r') as f:
@@ -902,7 +852,7 @@ def finalize_order(domain_conf_path, csr_path):
 
     # 2 发送 csr
     logger.info(f'>>> >>> 发送 csr: {der}')
-    protected = f'{{"nonce": "{new_nonce()}", "url": "{order_finalize_url}", "alg": "ES256", "kid": "{read_config("ACCOUNT_URL", CA_CONF)}"}}'
+    protected = f'{{"nonce": "{new_nonce()}", "url": "{order_finalize_url}", "alg": "ES{ECC_KEY_LEN}", "kid": "{read_config("ACCOUNT_URL", CA_CONF)}"}}'
     payload = f'{{"csr": "{der}"}}'
     protected64 = base64.urlsafe_b64encode(protected.encode()).decode().rstrip('=')
     payload64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
@@ -926,38 +876,53 @@ def finalize_order(domain_conf_path, csr_path):
 
     status = json_body['status']
 
-    # if status == 'processing':
-    #     link_order_url = http_header['Location']
-
-
-    if status == 'invalid':
-        logger.error('!!! 出错了')
-        raise Exception('出错了')
+    if status == 'processing':
+        link_order_url = http_header['Location']
     elif status == 'valid':
         link_cert = json_body['certificate']
         save_domain_conf('Le_LinkCert', link_cert)
         logger.info('\n######################################################\n####            申请成功，开始下发证书              ####\n######################################################')
+        return # letenc.. 可能不需要下面的流程 send link order
     else:
         logger.error(f'超出本程序处理范围: {status}，忽略错误，尝试下一步')
         # raise Exception(f'超出本程序处理范围: {status}')
+
+    # 3 send link order, util status=valid
+    while not status == 'valid':
+        logger.info(f'>>> >>> >>> send link order')
+        protected = f'{{"nonce": "{new_nonce()}", "url": "{link_order_url}", "alg": "ES{ECC_KEY_LEN}", "kid": "{read_config("ACCOUNT_URL", CA_CONF)}"}}'
+        protected64 = base64.urlsafe_b64encode(protected.encode()).decode().replace('=', '')
+        payload64 = ''
+        signature = sign_base64_url_replace(f'{protected64}.{payload64}', ACCOUNT_KEY)
+        data_body = f'{{"protected": "{protected64}", "payload": "{payload64}", "signature": "{signature}"}}'
+
+        response = requests.request("POST", link_order_url, headers=headers, data=data_body, verify=False)
+        http_header = response.headers
+        json_body = response.json()
+        logger.info(f'http_header: {http_header}')
+        logger.info(f'json_body: {json_body}')
+
+        SHARED_NONCE = http_header['Replay-Nonce']
+        status = json_body['status']
+
+        if status == 'processing':
+            logger.info('>>> >>> >>> >>> 等待 10s')
+            time.sleep(10)
+        elif status == 'invalid':
+            logger.error('!!! 出错了')
+            raise Exception('出错了')
+        elif status == 'valid':
+            link_cert = json_body['certificate']
+            save_domain_conf('Le_LinkCert', link_cert)
+            logger.info('\n######################################################\n####            申请成功，开始下发证书              ####\n######################################################')
 
 
 def download_cert(domain_conf_path, fullchain_path):
     logger.info('>>> 下载证书')
 
-    # 保存时间到domain.conf 自己设置
-    Le_CertCreateTime = int(time.time())
-    Le_CertCreateTimeStr = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(Le_CertCreateTime))
-    Le_NextRenewTime = Le_CertCreateTime + 60 * 60 * 24 * 60
-    Le_NextRenewTimeStr = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(Le_NextRenewTime))
-    save_domain_conf('Le_CertCreateTime', Le_CertCreateTime)
-    save_domain_conf('Le_CertCreateTimeStr', Le_CertCreateTimeStr)
-    save_domain_conf('Le_NextRenewTime', Le_NextRenewTime)
-    save_domain_conf('Le_NextRenewTimeStr', Le_NextRenewTimeStr)
-
     link_cert = read_config('Le_LinkCert', domain_conf_path)
 
-    protected = f'{{"nonce": "{new_nonce()}", "url": "{link_cert}", "alg": "ES256", "kid": "{read_config("ACCOUNT_URL", CA_CONF)}"}}'
+    protected = f'{{"nonce": "{new_nonce()}", "url": "{link_cert}", "alg": "ES{ECC_KEY_LEN}", "kid": "{read_config("ACCOUNT_URL", CA_CONF)}"}}'
     protected64 = base64.urlsafe_b64encode(protected.encode()).decode().replace('=', '')
     payload64 = ''
     signature = sign_base64_url_replace(f'{protected64}.{payload64}', ACCOUNT_KEY)
@@ -979,6 +944,19 @@ def download_cert(domain_conf_path, fullchain_path):
     # 保存证书
     with open(fullchain_path, 'w') as f:
         f.write(text_body)
+
+    # 加载证书
+    certificate = x509.load_pem_x509_certificate(text_body.encode(), default_backend())
+
+    # 保存时间到domain.conf
+    Le_CertCreateTime = int(certificate.not_valid_before_utc.timestamp())
+    Le_CertCreateTimeStr = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(Le_CertCreateTime))
+    Le_NextRenewTime = Le_CertCreateTime + 60 * 60 * 24 * 60
+    Le_NextRenewTimeStr = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(Le_NextRenewTime))
+    save_domain_conf('Le_CertCreateTime', Le_CertCreateTime)
+    save_domain_conf('Le_CertCreateTimeStr', Le_CertCreateTimeStr)
+    save_domain_conf('Le_NextRenewTime', Le_NextRenewTime)
+    save_domain_conf('Le_NextRenewTimeStr', Le_NextRenewTimeStr)
 
     if os.path.exists(fullchain_path) and os.path.getsize(fullchain_path) > 0:
         logger.info('######################################################')
@@ -1038,20 +1016,6 @@ if __name__ == '__main__':
 
 
     option = args[0]
-
-    # init_domain_info(args)
-    # init_account_info(args)
-    #
-    # init_letsencrypt_api()
-    # create_account_key(ACCOUNT_KEY)
-    # calc_jwk(ACCOUNT_KEY)
-    # reg_account()
-    #
-    # create_domain_key(CERT_KEY_PATH)
-    # on_before_issue()
-    # send_new_order()
-    # get_each_authorization()
-
 
     if option == 'issue':
         logger.info('>>> 开始申请证书')
