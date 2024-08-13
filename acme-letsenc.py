@@ -12,7 +12,7 @@ import requests
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec, utils
+from cryptography.hazmat.primitives.asymmetric import ec, utils, rsa
 from cryptography.hazmat.backends import default_backend
 from cryptography.x509.oid import NameOID
 from cryptography.x509.oid import ExtendedKeyUsageOID
@@ -34,6 +34,10 @@ DEFAULT_ACCOUNT_KEY_LENGTH = 'ec-256'
 DEFAULT_DOMAIN_KEY_LENGTH = 'ec-256'
 ECC_NAME = 'prime256v1'
 ECC_KEY_LEN = '256'
+
+# TODO add RSA2048
+DOMAIN_KEY_RSA = False
+DOMAIN_KEY_RSA_LEN = '2048'
 
 CA_LETSENCRYPT_V2 = "https://acme-v02.api.letsencrypt.org/directory"
 CA_LETSENCRYPT_V2_TEST = "https://acme-staging-v02.api.letsencrypt.org/directory"
@@ -275,7 +279,7 @@ def init_account_info(args):
     return CA_EMAIL
 
 
-# 创建账户私钥 TODO cryptography
+# 创建账户私钥 
 def create_account_key(account_key_path):
     logger.info('>>> 创建账户私钥')
     if os.path.exists(account_key_path) and os.path.getsize(account_key_path) > 0:
@@ -287,7 +291,7 @@ def create_account_key(account_key_path):
 
     pem = private_key.private_bytes(
     encoding=serialization.Encoding.PEM,
-    format=serialization.PrivateFormat.PKCS8,
+    format=serialization.PrivateFormat.TraditionalOpenSSL,
     encryption_algorithm=serialization.NoEncryption()
     )
 
@@ -305,7 +309,7 @@ def create_account_key(account_key_path):
         raise Exception('账户私钥保存失败')
 
 
-# 计算 jwk TODO cryptography
+# 计算 jwk 
 def calc_jwk(account_key_path):
 
     global JWK
@@ -470,12 +474,21 @@ def init_domain_info(args):
     logger.info(f'主域名: {MAIN_DOMAIN}')
     logger.info(f'多域名: {ALT_DOMAINS}')
 
+    # TODO add rsa
+    global DOMAIN_KEY_RSA
+    for arg in args:
+        if arg.startswith('--rsa'):
+            DOMAIN_KEY_RSA = True
+            logger.info('使用 RSA 密钥')
+            break
+
     global CERT_KEY_PATH, CSR_PATH, CSR_CONF_PATH, DOMAIN_CONF_PATH, CA_CERT_PATH, DOMAIN_CER_PATH, FULLCHAIN_CER_PATH
+
     # 创建目录，初始化路径
     domain_root = MAIN_DOMAIN.replace('*.', '')
-    if not os.path.exists(domain_root):
-        os.makedirs(domain_root)
-    domain_home = os.path.abspath(domain_root)
+    domain_home = os.path.abspath(domain_root)+('_rsa' if DOMAIN_KEY_RSA else '')  # TODO add rsa
+    if not os.path.exists(domain_home):
+        os.makedirs(domain_home)
     CERT_KEY_PATH = os.path.abspath(f'{domain_home}/{domain_root}.key')
     CSR_PATH = os.path.abspath(f'{domain_home}/{domain_root}.csr')
     CSR_CONF_PATH = os.path.abspath(f'{domain_home}/{domain_root}.csr.conf')
@@ -485,7 +498,7 @@ def init_domain_info(args):
     FULLCHAIN_CER_PATH = os.path.abspath(f'{domain_home}/fullchian.cer')
 
 
-# 创建域名私钥 TODO cryptography
+# 创建域名私钥 
 def create_domain_key(domain_key_path):
     logger.info('>>> 创建域名私钥')
     if os.path.exists(domain_key_path) and os.path.getsize(domain_key_path) > 0:
@@ -497,8 +510,43 @@ def create_domain_key(domain_key_path):
 
     pem = private_key.private_bytes(
     encoding=serialization.Encoding.PEM,
-    format=serialization.PrivateFormat.PKCS8,
+    format=serialization.PrivateFormat.TraditionalOpenSSL,
     encryption_algorithm=serialization.NoEncryption()
+    )
+
+    logger.info(f'domain.key: {pem}')
+
+    # 将PEM格式的私钥保存到文件
+    with open(domain_key_path, "wb") as key_file:
+        key_file.write(pem)
+
+    if os.path.exists(domain_key_path) and os.path.getsize(domain_key_path) > 0:
+        logger.info(f'域名私钥保存成功: {domain_key_path}')
+    else:
+        logger.error(f'!!! 域名私钥保存失败')
+        # sys.exit(1)
+        raise Exception('域名私钥保存失败')
+
+
+# 创建域名私钥  RSA 2048
+def create_domain_key_rsa(domain_key_path):
+    logger.info('>>> 创建域名私钥 RSA 2048')
+    if os.path.exists(domain_key_path) and os.path.getsize(domain_key_path) > 0:
+        logger.info(f'使用已有域名私钥: {domain_key_path}')
+        return
+
+    # 生成私钥
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+        backend=default_backend()
+    )
+
+    # 私钥序列化
+    pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption()
     )
 
     logger.info(f'domain.key: {pem}')
@@ -532,7 +580,7 @@ def on_before_issue():
     le_alt = ALT_DOMAINS
     le_webroot = 'dns'
     le_api = CA_LETSENCRYPT_V2
-    le_keylength = DEFAULT_DOMAIN_KEY_LENGTH
+    le_keylength = DOMAIN_KEY_RSA_LEN if DOMAIN_KEY_RSA else DEFAULT_DOMAIN_KEY_LENGTH   # TODO add rsa
 
     save_domain_conf('Le_Domain', le_domain)
     save_domain_conf('Le_Alt', le_alt)
@@ -970,9 +1018,9 @@ def download_cert(domain_conf_path, fullchain_path):
 
 
 def check_args(args):
-    # 合法参数 issue renew continue --domain --email
+    # 合法参数 issue renew continue --domain --email --rsa
     for arg in args[1:]:
-        if arg[2:arg.find('=')] not in ['domain', 'email']:
+        if arg[2:arg.find('=')] not in ['domain', 'email', 'rsa']:
             logger.error(f'!!! 参数错误: {arg}')
             raise Exception('参数错误')
     return True
@@ -998,7 +1046,7 @@ def check_args(args):
 #      * 11 createCsr()                          创建 domain.csr    acme.sh => if ! _createcsr "$_main_domain" "$_alt_domains" "$CERT_KEY_PATH" "$CSR_PATH" "$DOMAIN_SSL_CONF"; then
 #      * 12 finalizeOrder()                      完成申请证书最后一步 acme.sh => Lets finalize the order. > Order status is processing, lets sleep and retry. >   Order status is valid.
 #      * 13 downloadCert()                       下载证书
-#      * 14 extractCert() 非必要，没有实现
+#      * 14 extractCert()                        提取与转换，非必要，没有实现
 #
 #      和 Acme2J(https://github.com/ssldog-com/Acme2J) 的流程基本相同
 #
@@ -1007,7 +1055,7 @@ if __name__ == '__main__':
     logger.info(author)
     # logger.info('>>> 开始申请证书')
 
-    # args 的格式 [option/操作(issue, continue, renew), --domain=域名, --domain=域名1, --domain=域名2, 其余域名..., --email=邮箱]
+    # args 的格式 [option/操作(issue, continue, renew), --domain=域名, --domain=域名1, --domain=域名2, 其余域名..., --email=邮箱, --rsa(可选)]
     args = sys.argv[1:]
     args = list(dict.fromkeys(args))
     logger.info(f'args: {args}')
@@ -1033,7 +1081,12 @@ if __name__ == '__main__':
         # get_eab_kid() # zerossl
         reg_account()
 
-        create_domain_key(CERT_KEY_PATH)
+        # TODO add rsa
+        if DOMAIN_KEY_RSA:
+            create_domain_key_rsa(CERT_KEY_PATH);
+        else:
+            create_domain_key(CERT_KEY_PATH)
+
         on_before_issue()
         send_new_order()
         get_each_authorization()
@@ -1070,7 +1123,12 @@ if __name__ == '__main__':
         os.rename(DOMAIN_CONF_PATH, f'{DOMAIN_CONF_PATH}.{time.strftime("%Y%m%d%H%M%S")}')
         os.rename(DOMAIN_CER_PATH, f'{DOMAIN_CER_PATH}.{time.strftime("%Y%m%d%H%M%S")}')
 
-        create_domain_key(CERT_KEY_PATH)
+        # TODO add rsa
+        if DOMAIN_KEY_RSA:
+            create_domain_key_rsa(CERT_KEY_PATH);
+        else:
+            create_domain_key(CERT_KEY_PATH)
+
         on_before_issue()
         send_new_order()
         get_each_authorization()
