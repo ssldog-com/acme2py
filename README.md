@@ -22,12 +22,14 @@ The CA are [zerossl](https://zerossl.com) and  [let‘sencrypt](https://letsencr
 * ✅ wildcard / 泛域名
 * ❌ ip / ip证书
 * ✅ multi domain / 多域名
+* ❌ cron / 定时任务
 
 
 
 
 ## 运行要求 / Requirements
 * python 3.8+
+* release版增加了无需python的可执行文件 / The pre release version has added executable files that do not require Python
 
 ## 使用 / Usage
 
@@ -56,7 +58,7 @@ python acme-zerossl.py continue --email=example@email.com --domain=example.com -
 
 ### 🆕 更新证书 / renew
 ````bash
-python renew --email=example@email.com --domain=example.com --domian=*.example.com 
+python acme-zerossl.py renew --email=example@email.com --domain=example.com --domian=*.example.com 
 # 实际上重新申请证书 Actually this will issue a new cert
 ````
 ### ❌ 吊销证书 未实现 / revoke certs NOT implemented
